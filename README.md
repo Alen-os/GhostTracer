@@ -20,7 +20,7 @@ The **Network Deception Tool** is a cybersecurity application focused on offense
 ### Setup Instructions
 1. **Clone the Repository**  
    ```bash
-   git clone https://github.com/yourusername/Network-Deception-Tool.git
+   git clone https://github.com/Alen-os/Network-Deception-Tool.git
    ```
 2. **Navigate to Project Directory**  
    ```bash
