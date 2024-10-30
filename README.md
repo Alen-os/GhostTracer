@@ -16,6 +16,7 @@ The **Network Deception Tool** is a cybersecurity application focused on offense
 ### Prerequisites
 - Python 3.x
 - Required libraries: `scapy`, `tkinter`
+- Install Npcap in your system before using this tool
 
 ### Setup Instructions
 1. **Clone the Repository**  
