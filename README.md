@@ -74,9 +74,6 @@ The **Network Deception Tool** is a cybersecurity application focused on offense
 
 5. **Open a Pull Request**
 
-## License
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
-
 ## Acknowledgments
 Special thanks to the open-source community for tools and libraries like Scapy that made this project possible.
 
