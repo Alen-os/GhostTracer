@@ -2,19 +2,17 @@ import os
 import random
 import socket
 import threading
-from scapy.all import IP, TCP, UDP, Raw, send, DNS, DNSQR
 import logging
 import time
-import subprocess
 import sys
 from PyQt6 import QtWidgets, QtCore
+from scapy.all import IP, ICMP, send, DNS, DNSQR
 
 # Configure logging
-logging.basicConfig(filename='network_deception.log', level=logging.INFO)
+logging.basicConfig(filename='network_deception.log', level=logging.INFO, format='%(asctime)s - %(message)s')
 
 # Global variables
 attack_event = threading.Event()
-targets = []
 defense_event = threading.Event()
 
 class DeceptionTool:
@@ -24,7 +22,9 @@ class DeceptionTool:
         self.root = None
         self.log_box = None
         self.ids_box = None
+        self.target_list = None
         self.is_attacking = False  # Track attack state
+        self.attack_thread = None  # Store the attack thread
 
     def check_admin(self):
         """Check if the script is running with admin privileges."""
@@ -36,11 +36,11 @@ class DeceptionTool:
 
     def log_activity(self, message, ids_alert=False):
         """Logs network activities and IDS alerts."""
-        logging.info(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}")
+        logging.info(message)  # Logging to the file
         if ids_alert:
-            self.ids_box.append(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}")
+            self.ids_box.append(f"IDS Alert: {message}")
         else:
-            self.log_box.append(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}")
+            self.log_box.append(f"Network Log: {message}")
 
     def resolve_to_ip(self, target):
         """Resolve a domain name to an IP address."""
@@ -54,165 +54,147 @@ class DeceptionTool:
         """Generate a random spoofed IP address."""
         return f"{random.randint(1, 254)}.{random.randint(1, 254)}.{random.randint(1, 254)}.{random.randint(1, 254)}"
 
-    def initiate_attack(self):
-        """Simulate a multi-protocol, intense attack on the target IPs or domains."""
-        self.log_activity("Starting simulated data exfiltration attacks...", ids_alert=True)
-        self.is_attacking = True  # Set attack state to True
+    def generate_fake_dns_query(self):
+        """Generate a fake DNS query to simulate legitimate activity."""
+        domains = ["google.com", "yahoo.com", "amazon.com", "twitter.com", "microsoft.com", "netflix.com", "apple.com", "wikipedia.org"]
+        domain = random.choice(domains)
+        return DNS(rd=1, qd=DNSQR(qname=domain))
 
-        def send_packets(target_ip):
-            """Send fake TCP and UDP packets to simulate data exfiltration."""
-            while attack_event.is_set():
-                fake_ip = self.generate_fake_ip()
-                tcp_packet = IP(dst=target_ip, src=fake_ip) / TCP(dport=80, sport=random.randint(1024, 65535), flags="PA") / Raw(b"GET /sensitive_data HTTP/1.1\r\nHost: target\r\n\r\n")
-                udp_packet = IP(dst=target_ip, src=fake_ip) / UDP(dport=53, sport=random.randint(1024, 65535)) / DNS(rd=1, qd=DNSQR(qname="example.com"))
-                
-                send(tcp_packet, verbose=False)
-                send(udp_packet, verbose=False)
-
-                self.log_activity(f"Sent TCP/UDP packets from {fake_ip} to {target_ip}")
-
-        # Create and start a thread for each target
-        for target in self.targets:
-            target_ip = self.resolve_to_ip(target) if not self.is_valid_ip(target) else target
-            if target_ip:
-                threading.Thread(target=send_packets, args=(target_ip,), daemon=True).start()
-
-    def is_valid_ip(self, target):
-        """Check if a string is a valid IP address."""
-        try:
-            socket.inet_aton(target)
-            return True
-        except socket.error:
-            return False
+    def simulate_browsing_activity(self):
+        """Simulate realistic HTTP GET/POST requests."""
+        pages = ["index.html", "login.php", "dashboard", "settings", "profile"]
+        request = random.choice(pages)
+        return f"GET /{request} HTTP/1.1"
 
     def start_attack(self):
-        """Start the attack by setting the attack event."""
-        attack_event.set()
-        self.initiate_attack()
-        self.log_activity("Attack started.", ids_alert=True)  # Log attack started message
+        """Start the network attack simulation in a separate thread."""
+        if self.is_attacking:
+            return  # If already attacking, do nothing
+        
+        self.is_attacking = True
+        self.log_activity("Starting attack simulation...")
+        
+        # Start the attack in a new thread
+        self.attack_thread = threading.Thread(target=self.attack_simulation)
+        self.attack_thread.daemon = True  # Ensures the thread terminates when the program ends
+        self.attack_thread.start()
+
+    def attack_simulation(self):
+        """Simulate the attack."""
+        while self.is_attacking:
+            for target in self.targets:
+                target_ip = self.resolve_to_ip(target)
+                if target_ip:
+                    spoofed_ip = self.generate_fake_ip()
+                    self.log_activity(f"Sending traffic to {target} (IP: {target_ip}) from spoofed IP: {spoofed_ip}")
+                    send(IP(dst=target_ip)/ICMP(), verbose=False)
+                    time.sleep(0.1)  # Reduced sleep for faster attack (can be adjusted)
 
     def stop_attack(self):
-        """Stop the attack by clearing the attack event."""
-        attack_event.clear()
-        self.is_attacking = False  # Set attack state to False
-        self.log_activity("Attack stopped.", ids_alert=True)
+        """Stop the network attack simulation."""
+        if not self.is_attacking:
+            return  # If no attack is running, do nothing
 
-    def add_target(self, target):
-        """Add a target IP or domain to the attack scope."""
-        if target not in self.targets:
+        self.is_attacking = False
+        self.attack_thread.join()  # Wait for the attack thread to properly terminate
+        self.log_activity("Attack simulation stopped.")
+
+    def add_target(self):
+        """Add a target to the list."""
+        target = self.target_input.text()
+        if target:
             self.targets.append(target)
-            self.log_activity(f"Added target: {target}", ids_alert=True)
-        else:
-            self.log_activity(f"Target {target} is already in scope.", ids_alert=True)
+            self.target_input.clear()
+            self.update_target_list()
+            self.log_activity(f"Added target: {target}")
 
-    def remove_target(self, target):
-        """Remove a target IP or domain from the attack scope."""
-        if target in self.targets:
+    def remove_target(self):
+        """Remove a selected target from the list."""
+        selected_target = self.target_list.currentItem()
+        if selected_target:
+            target = selected_target.text()
             self.targets.remove(target)
-            self.log_activity(f"Removed target: {target}", ids_alert=True)
-        else:
-            self.log_activity(f"Target {target} not found in scope.", ids_alert=True)
+            self.update_target_list()
+            self.log_activity(f"Removed target: {target}")
 
-    def monitor_network(self):
-        """Monitor network packets for potential attacks using tcpdump."""
-        self.log_activity("Starting tcpdump network monitoring...", ids_alert=True)
-        
-        # Run tcpdump to capture packets and filter them based on IP
-        process = subprocess.Popen(['tcpdump', '-i', 'eth0', '-nn', '-v', 'ip'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
-        while True:
-            output = process.stdout.readline()
-            if output:
-                output = output.decode('utf-8').strip()
-                self.log_activity(f"Captured: {output}")
+    def update_target_list(self):
+        """Update the displayed list of targets in the GUI."""
+        self.target_list.clear()
+        self.target_list.addItems(self.targets)
 
-                # Check if any target is involved in the captured packet
-                for target in self.targets:
-                    if target in output:
-                        self.log_activity(f"Suspicious packet from target: {target}", ids_alert=True)
-                        defense_event.set()
-                        self.trigger_decoy()
+    def trigger_ids_alert(self):
+        """Manually trigger an IDS alert."""
+        self.log_activity("Manual IDS Alert: Suspicious activity detected!", ids_alert=True)
 
-    def trigger_decoy(self):
-        """Initiate decoy activities automatically."""
-        self.log_activity("Triggering decoy mechanism...", ids_alert=True)
-        for _ in range(5):
-            fake_ip = self.generate_fake_ip()
-            packet = IP(dst=fake_ip, src=self.generate_fake_ip()) / TCP(dport=80, flags="S")
-            send(packet, verbose=False)
-            self.log_activity(f"Sent decoy traffic to {fake_ip} on port 80")
+    def setup_gui(self):
+        """Set up the GUI components."""
+        self.root = QtWidgets.QWidget()
+        self.root.setWindowTitle("Network Deception Tool")
 
-    def start_network_monitoring(self):
-        """Start monitoring the network for suspicious activity in a separate thread."""
-        threading.Thread(target=self.monitor_network, daemon=True).start()
-
-    def start_gui(self):
-        """Initialize the GUI for user interaction."""
-        app = QtWidgets.QApplication([])
-
-        # Main Window
-        window = QtWidgets.QWidget()
-        window.setWindowTitle("Network Deception Tool")
-        
         # Create layout
         layout = QtWidgets.QVBoxLayout()
 
-        # IDS Alerts and Log Display areas
-        self.ids_box = QtWidgets.QTextEdit()
-        self.ids_box.setReadOnly(True)
-        layout.addWidget(self.ids_box)
-        self.ids_box.append("IDS Alert & System Logs:\n")
+        # Target management
+        target_layout = QtWidgets.QHBoxLayout()
 
-        self.log_box = QtWidgets.QTextEdit()
+        self.target_input = QtWidgets.QLineEdit(self.root)
+        self.target_input.setPlaceholderText("Enter target domain or IP")
+        target_layout.addWidget(self.target_input)
+
+        add_button = QtWidgets.QPushButton("Add Target", self.root)
+        add_button.clicked.connect(self.add_target)
+        target_layout.addWidget(add_button)
+
+        remove_button = QtWidgets.QPushButton("Remove Target", self.root)
+        remove_button.clicked.connect(self.remove_target)
+        target_layout.addWidget(remove_button)
+
+        layout.addLayout(target_layout)
+
+        # Target list
+        self.target_list = QtWidgets.QListWidget(self.root)
+        layout.addWidget(self.target_list)
+
+        # Logs
+        self.log_box = QtWidgets.QTextEdit(self.root)
         self.log_box.setReadOnly(True)
+        self.log_box.setPlainText("Log Section")  # Set initial text for the log box
         layout.addWidget(self.log_box)
-        self.log_box.append("Network Packet Logs:\n")
 
-        # Entry for target IP or domain
-        self.target_entry = QtWidgets.QLineEdit()
-        layout.addWidget(self.target_entry)
+        # IDS box
+        self.ids_box = QtWidgets.QTextEdit(self.root)
+        self.ids_box.setReadOnly(True)
+        self.ids_box.setPlainText("IDS Section")  # Set initial text for the IDS box
+        layout.addWidget(self.ids_box)
 
-        # Buttons
-        add_button = QtWidgets.QPushButton("Add Target")
-        add_button.clicked.connect(self.add_target_from_entry)
-        layout.addWidget(add_button)
+        # Set names for the target section
+        self.target_list.addItem("Target Section")
 
-        remove_button = QtWidgets.QPushButton("Remove Target")
-        remove_button.clicked.connect(self.remove_target_from_entry)
-        layout.addWidget(remove_button)
+        # Start/Stop attack buttons
+        attack_button = QtWidgets.QPushButton("Start Attack", self.root)
+        attack_button.clicked.connect(self.start_attack)
+        layout.addWidget(attack_button)
 
-        start_button = QtWidgets.QPushButton("Start Attack")
-        start_button.clicked.connect(self.start_attack)
-        layout.addWidget(start_button)
-
-        stop_button = QtWidgets.QPushButton("Stop Attack")
+        stop_button = QtWidgets.QPushButton("Stop Attack", self.root)
         stop_button.clicked.connect(self.stop_attack)
         layout.addWidget(stop_button)
 
-        exit_button = QtWidgets.QPushButton("Exit")
-        exit_button.clicked.connect(window.close)
-        layout.addWidget(exit_button)
+        # Add a button to manually trigger IDS alerts
+        alert_button = QtWidgets.QPushButton("Trigger IDS Alert", self.root)
+        alert_button.clicked.connect(self.trigger_ids_alert)
+        layout.addWidget(alert_button)
 
-        window.setLayout(layout)
-        window.show()
+        # Set layout for the root widget
+        self.root.setLayout(layout)
+        self.root.show()
 
-        # Start network monitoring in a separate thread
-        self.start_network_monitoring()
+    def run(self):
+        """Run the tool."""
+        app = QtWidgets.QApplication([])  # Create the QApplication object
+        self.setup_gui()  # Set up the GUI
+        app.exec()  # Start the event loop
 
-        app.exec()
-
-    def add_target_from_entry(self):
-        target = self.target_entry.text()
-        if target:
-            self.add_target(target)
-            self.target_entry.clear()  # Clear the input box after adding
-
-    def remove_target_from_entry(self):
-        target = self.target_entry.text()
-        if target:
-            self.remove_target(target)
-            self.target_entry.clear()  # Clear the input box after removing
-
+# Start the tool
 if __name__ == "__main__":
     tool = DeceptionTool()
-    tool.start_gui()
+    tool.run()
