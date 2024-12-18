@@ -2,13 +2,12 @@ import os
 import random
 import socket
 import threading
-from scapy.all import sniff, IP, TCP, UDP, ICMP, DNS, DNSQR, ARP, send, Raw
+from scapy.all import IP, TCP, UDP, Raw, send, DNS, DNSQR
 import logging
 import time
-import ctypes
+import subprocess
 import sys
-import tkinter as tk
-from tkinter import scrolledtext, messagebox
+from PyQt6 import QtWidgets, QtCore
 
 # Configure logging
 logging.basicConfig(filename='network_deception.log', level=logging.INFO)
@@ -29,24 +28,19 @@ class DeceptionTool:
 
     def check_admin(self):
         """Check if the script is running with admin privileges."""
-        if not ctypes.windll.shell32.IsUserAnAdmin():
-            print("This tool requires admin privileges. Please run as administrator.")
-            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
-            sys.exit(0)
+        if os.geteuid() != 0:
+            print("This tool requires root (admin) privileges. Please run as root.")
+            sys.exit(1)
+        else:
+            print("Running with root privileges.")
 
     def log_activity(self, message, ids_alert=False):
         """Logs network activities and IDS alerts."""
         logging.info(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}")
         if ids_alert:
-            self.ids_box.config(state=tk.NORMAL)
-            self.ids_box.insert(tk.END, f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
-            self.ids_box.config(state=tk.DISABLED)
-            self.ids_box.see(tk.END)
+            self.ids_box.append(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}")
         else:
-            self.log_box.config(state=tk.NORMAL)
-            self.log_box.insert(tk.END, f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
-            self.log_box.config(state=tk.DISABLED)
-            self.log_box.see(tk.END)
+            self.log_box.append(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}")
 
     def resolve_to_ip(self, target):
         """Resolve a domain name to an IP address."""
@@ -119,36 +113,25 @@ class DeceptionTool:
         else:
             self.log_activity(f"Target {target} not found in scope.", ids_alert=True)
 
-    def monitor_network(self, pkt):
-        """Monitor network packets for potential attacks and flag suspicious activities."""
-        if IP in pkt:
-            src_ip = pkt[IP].src
-            dst_ip = pkt[IP].dst
-            proto = pkt[IP].proto
-            protocol_name = self.get_protocol_name(proto)
-            packet_info = self.get_packet_info(pkt)
-            self.log_activity(f"Packet: {src_ip} -> {dst_ip} [Protocol: {protocol_name}] {packet_info}")
+    def monitor_network(self):
+        """Monitor network packets for potential attacks using tcpdump."""
+        self.log_activity("Starting tcpdump network monitoring...", ids_alert=True)
+        
+        # Run tcpdump to capture packets and filter them based on IP
+        process = subprocess.Popen(['tcpdump', '-i', 'eth0', '-nn', '-v', 'ip'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        while True:
+            output = process.stdout.readline()
+            if output:
+                output = output.decode('utf-8').strip()
+                self.log_activity(f"Captured: {output}")
 
-            if src_ip in self.targets:
-                self.log_activity(f"Suspicious packet from target: {src_ip}", ids_alert=True)
-                defense_event.set()
-                self.trigger_decoy()
-
-    def get_protocol_name(self, proto):
-        """Convert protocol number to name."""
-        protocols = {1: "ICMP", 6: "TCP", 17: "UDP"}
-        return protocols.get(proto, "Other")
-
-    def get_packet_info(self, pkt):
-        """Return detailed information about the packet."""
-        details = ""
-        if TCP in pkt:
-            details = f"TCP: src port {pkt[TCP].sport}, dst port {pkt[TCP].dport}"
-        elif UDP in pkt:
-            details = f"UDP: src port {pkt[UDP].sport}, dst port {pkt[UDP].dport}"
-        elif ICMP in pkt:
-            details = f"ICMP: type {pkt[ICMP].type}, code {pkt[ICMP].code}"
-        return details
+                # Check if any target is involved in the captured packet
+                for target in self.targets:
+                    if target in output:
+                        self.log_activity(f"Suspicious packet from target: {target}", ids_alert=True)
+                        defense_event.set()
+                        self.trigger_decoy()
 
     def trigger_decoy(self):
         """Initiate decoy activities automatically."""
@@ -160,51 +143,75 @@ class DeceptionTool:
             self.log_activity(f"Sent decoy traffic to {fake_ip} on port 80")
 
     def start_network_monitoring(self):
-        """Start monitoring the network for suspicious activity."""
-        self.log_activity("Starting network monitoring...", ids_alert=True)
-        sniff(prn=self.monitor_network, filter="ip", store=0)
+        """Start monitoring the network for suspicious activity in a separate thread."""
+        threading.Thread(target=self.monitor_network, daemon=True).start()
 
     def start_gui(self):
         """Initialize the GUI for user interaction."""
-        self.root = tk.Tk()
-        self.root.title("Network Deception Tool")
+        app = QtWidgets.QApplication([])
+
+        # Main Window
+        window = QtWidgets.QWidget()
+        window.setWindowTitle("Network Deception Tool")
+        
+        # Create layout
+        layout = QtWidgets.QVBoxLayout()
 
         # IDS Alerts and Log Display areas
-        self.ids_box = scrolledtext.ScrolledText(self.root, width=100, height=10, state=tk.DISABLED)
-        self.ids_box.pack(padx=10, pady=(10, 0))
-        self.ids_box.insert(tk.END, "IDS Alert & System Logs:\n")
+        self.ids_box = QtWidgets.QTextEdit()
+        self.ids_box.setReadOnly(True)
+        layout.addWidget(self.ids_box)
+        self.ids_box.append("IDS Alert & System Logs:\n")
 
-        self.log_box = scrolledtext.ScrolledText(self.root, width=100, height=20, state=tk.DISABLED)
-        self.log_box.pack(padx=10, pady=10)
-        self.log_box.insert(tk.END, "Network Packet Logs:\n")
+        self.log_box = QtWidgets.QTextEdit()
+        self.log_box.setReadOnly(True)
+        layout.addWidget(self.log_box)
+        self.log_box.append("Network Packet Logs:\n")
 
         # Entry for target IP or domain
-        self.target_entry = tk.Entry(self.root, width=50)
-        self.target_entry.pack(pady=10)
+        self.target_entry = QtWidgets.QLineEdit()
+        layout.addWidget(self.target_entry)
 
         # Buttons
-        tk.Button(self.root, text="Add Target", command=self.add_target_from_entry).pack(pady=5)
-        tk.Button(self.root, text="Remove Target", command=self.remove_target_from_entry).pack(pady=5)
-        tk.Button(self.root, text="Start Attack", command=self.start_attack).pack(pady=5)
-        tk.Button(self.root, text="Stop Attack", command=self.stop_attack).pack(pady=5)
-        tk.Button(self.root, text="Exit", command=self.root.quit).pack(pady=(5, 10))
+        add_button = QtWidgets.QPushButton("Add Target")
+        add_button.clicked.connect(self.add_target_from_entry)
+        layout.addWidget(add_button)
+
+        remove_button = QtWidgets.QPushButton("Remove Target")
+        remove_button.clicked.connect(self.remove_target_from_entry)
+        layout.addWidget(remove_button)
+
+        start_button = QtWidgets.QPushButton("Start Attack")
+        start_button.clicked.connect(self.start_attack)
+        layout.addWidget(start_button)
+
+        stop_button = QtWidgets.QPushButton("Stop Attack")
+        stop_button.clicked.connect(self.stop_attack)
+        layout.addWidget(stop_button)
+
+        exit_button = QtWidgets.QPushButton("Exit")
+        exit_button.clicked.connect(window.close)
+        layout.addWidget(exit_button)
+
+        window.setLayout(layout)
+        window.show()
 
         # Start network monitoring in a separate thread
-        threading.Thread(target=self.start_network_monitoring, daemon=True).start()
+        self.start_network_monitoring()
 
-        self.root.mainloop()
+        app.exec()
 
     def add_target_from_entry(self):
-        target = self.target_entry.get()
+        target = self.target_entry.text()
         if target:
             self.add_target(target)
-            self.target_entry.delete(0, tk.END)  # Clear the input box after adding
+            self.target_entry.clear()  # Clear the input box after adding
 
     def remove_target_from_entry(self):
-        target = self.target_entry.get()
+        target = self.target_entry.text()
         if target:
             self.remove_target(target)
-            self.target_entry.delete(0, tk.END)  # Clear the input box after removing
+            self.target_entry.clear()  # Clear the input box after removing
 
 if __name__ == "__main__":
     tool = DeceptionTool()
